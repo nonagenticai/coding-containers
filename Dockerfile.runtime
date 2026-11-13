@@ -1,0 +1,174 @@
+# codegraph-runtime: provisioned-pod image.
+#
+# Built and pushed to ghcr.io/nonagenticai/codegraph-runtime by the image-only
+# CI workflow (.github/workflows/runtime-image.yaml). Used by KubernetesContainerProvisioner
+# (src/core/kubernetes_container_provisioner.py) as the default
+# PROVISIONER_IMAGE — i.e. the image of every per-repo analysis pod, not
+# of coding-containers itself.
+#
+# Why not a plain python base (i.e. why bake uv in):
+#   coding-security cross-major dependency upgrades shell out `uv add`
+#   inside the pod. Without uv on PATH the command exits 127. Baking it
+#   in once (~14 MB) is preferable to bootstrapping at every upgrade.
+#
+# Why python:3.14-slim:
+#   3.14.3 is the cluster standard, and the repos these pods clone declare
+#   `requires-python = ">=3.14"` (e.g. coding-github). On the previous
+#   3.13-slim base a standard repo could not run its own test suite: uv
+#   had to download a SECOND managed CPython 3.14 into every workspace at
+#   run time. The sibling service image (./Dockerfile) was already on
+#   3.14-slim, so this base was simply stale.
+ARG BASE_REGISTRY=docker.io
+
+# bun's official image as a named stage, so it is pulled through ${BASE_REGISTRY}
+# exactly like the base (a global ARG is only in scope in FROM lines). See the COPY
+# below for the version policy.
+FROM ${BASE_REGISTRY}/oven/bun:1.4.4 AS bun
+
+FROM ${BASE_REGISTRY}/library/python:3.14-slim
+
+# git: required by the in-container git endpoints (get_container_git_status,
+# commit_container_changes, push). The workspace already holds a .git dir from
+# the clone init-container, but the runtime container needs the git binary to
+# read/commit it. Kept minimal (--no-install-recommends).
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends git \
+    && rm -rf /var/lib/apt/lists/*
+
+# uv from the official Astral image; copy the static binary, no pip needed.
+COPY --from=ghcr.io/astral-sh/uv:0.13.7 /uv /uvx /bin/
+
+# bun from the official image; static binary, no installer script. Measured
+# 2026-09-17: NO org repo ships `bun.lockb` and five ship a TEXT `bun.lock`
+# (w2v_frontend, orchestrator, chat-bridge x3). Policy (George, 2026-10-27): the
+# LATEST bun release, 1.4.4 (2026-10-22, amd64 + arm64), glibc tag (this is a
+# Debian base, so not -alpine). Pulled through ${BASE_REGISTRY} (the `bun` stage
+# at the top): the mirror carries docker.io/oven/bun:1.4.4 via the registry
+# prewarm list. Bump it there first, then here.
+COPY --from=bun /usr/local/bin/bun /usr/local/bin/bun
+
+# Redis-protocol dependency for source services (py2rust gap #4 full): `ws-redis`
+# runs a loopback Valkey for the workspace user, on demand (not a sidecar: a
+# sidecar would run in EVERY workspace whether or not anything needs it, and a
+# pod cannot gain one after creation). Valkey, not Redis 7.4+ (RSALv2/SSPL).
+# From the base's OWN Debian (trixie) archive, like git above, NOT `COPY --from` an
+# upstream image: that would pull the Valkey image straight from Docker Hub and
+# bypass ${BASE_REGISTRY} entirely (measured 2026-10-27: the private mirror in
+# front of Docker Hub carries no valkey). Debian's package is 8.1.1 with
+# trixie-security fixes and links against the base's own libs. Its postinst does
+# not start a server in a build (policy-rc.d), and ws-redis never uses its config.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends valkey-server valkey-tools \
+    && rm -rf /var/lib/apt/lists/*
+COPY scripts/ws-redis /usr/local/bin/ws-redis
+RUN chmod 0755 /usr/local/bin/ws-redis
+
+# Static-analysis tools. coding-analysis / coding-testing exec these INTO this
+# per-repo container (the repo is mounted here at /app/data/repo, never in the
+# service pods), so the binaries must live here, not in the service images.
+# Python tools — astral ruff (lint + isort `I` + format, replacing pylint/flake8/
+# isort/autoflake/black) and ty (type checking, replacing mypy/pyright), both
+# pinned exactly: their JSON output shapes (`ruff check --output-format json`,
+# `ty check --output-format gitlab`) are what the callers parse. bandit, radon
+# and vulture have no astral equivalent. semgrep is pure-Python-installable and
+# covers multi-language rules.
+RUN uv pip install --system --no-cache \
+        "ruff==0.17.3" "ty==0.0.92" "bandit" "radon" "vulture" "semgrep"
+
+# pytest — the grid legs and card QA run a repo's tests IN this workspace via
+# execInWorkspace with a BARE `python -m pytest` (ncn it_repo_findings.grid.json
+# r6b/q9/testing_execution legs, routines/r.qa.tests.fix-unit.json). Without it
+# that argv exits 1 with "No module named pytest", which every *_red step reads
+# as a genuine test failure. It cannot be installed at run time: the pod runs as
+# USER 1000 (below) and site-packages is root-owned.
+# NO plugins, on purpose: measured on ncn origin/main 2026-09-29, every grid and
+# procedure argv uses only core flags (--rootdir, -o junit_family=xunit1,
+# --junitxml, --collect-only, -q). pytest-cov / hypothesis flags in
+# coding-testing run in codegraph/test-executor-python, not in this image.
+# A repo's own `.venv` (uv sync) does not see this copy: uv venvs are created
+# with include-system-site-packages = false, so /workspace/.venv/bin/python
+# keeps resolving the repo-pinned pytest.
+RUN uv pip install --system --no-cache "pytest>=8"
+
+# Node + JS/TS tools (eslint/prettier/tsc/jshint). Installed from the debian
+# nodejs/npm packages (reliable, no external NodeSource fetch) plus npm globals.
+# `tsc` is provided by the `typescript` package. These are whitelisted in
+# container_exec.py; baking them here lets JS/TS repos be linted instead of
+# abstaining.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends nodejs npm \
+    && npm install -g --no-fund --no-audit eslint prettier typescript jshint \
+    && npm cache clean --force \
+    && rm -rf /var/lib/apt/lists/*
+
+# Smoke-check the binaries at build time so a broken image never reaches the registry.
+RUN uv --version && git --version \
+    && ruff --version && ty --version && bandit --version \
+    && radon --version && vulture --version \
+    && semgrep --version \
+    && python -m pytest --version \
+    && node --version && eslint --version && prettier --version \
+    && tsc --version && jshint --version \
+    && bun --version \
+    && valkey-server --version && valkey-cli --version
+
+# pytest smoke with the grid legs' EXACT argv shape, not just --version: a pytest
+# that no longer honours `-o junit_family=xunit1` or `--junitxml` would still
+# print a version and then break every in-workspace test leg.
+RUN d="$(mktemp -d)" \
+    && printf 'def test_ok():\n    assert True\n' > "$d/test_smoke.py" \
+    && (cd "$d" && python -m pytest --rootdir . -o junit_family=xunit1 \
+        --junitxml "$d/junit.xml" test_smoke.py -q) \
+    && grep -q 'testcase' "$d/junit.xml" \
+    && rm -rf "$d"
+
+# Bug-hunt agent. coding-analysis execs `python3 -I -P /opt/hunt-agent/hunt.py
+# --repo <root> --out <file>` IN this pod (the tenant's code never leaves the
+# workspace) and FAILS the hunt when the agent's reported agent_sha or
+# tree-sitter/grammar versions differ from its own. So:
+#  * the agent is a VENDORED byte-for-byte copy of coding-analysis
+#    src/hunt_agent (vendor/hunt-agent/PIN.json names the commit + agent_sha;
+#    scripts/check-hunt-agent-vendor.py is the drift check, also run in CI);
+#  * tree-sitter + grammars are installed at EXACTLY coding-analysis's uv.lock
+#    pins (PIN.json python_packages is the only list) into the SYSTEM
+#    interpreter: `-I` drops the user site and PYTHON* env, so --user or a venv
+#    would be invisible to the agent. Wheels only — no compiler in this base.
+# Root-owned and read-only for uid 1000; `-P` keeps /opt/hunt-agent off
+# sys.path, so nothing in it is importable by the repo's own code.
+COPY vendor/hunt-agent/agent/ /opt/hunt-agent/
+RUN --mount=type=bind,source=vendor/hunt-agent/PIN.json,target=/tmp/hunt-pin/vendor/hunt-agent/PIN.json \
+    --mount=type=bind,source=scripts/check-hunt-agent-vendor.py,target=/tmp/hunt-pin/scripts/check-hunt-agent-vendor.py \
+    chmod -R u=rwX,go=rX /opt/hunt-agent \
+    && python3 /tmp/hunt-pin/scripts/check-hunt-agent-vendor.py requirements > /tmp/hunt-requirements.txt \
+    && uv pip install --system --no-cache --only-binary :all: -r /tmp/hunt-requirements.txt \
+    && rm -f /tmp/hunt-requirements.txt \
+    && python3 /tmp/hunt-pin/scripts/check-hunt-agent-vendor.py image-smoke --agent-dir /opt/hunt-agent
+
+# CI=1: vitest and jest read it and run once instead of entering watch mode,
+# which under `kubectl exec` (no TTY, no SIGINT) would otherwise hang until
+# the exec timeout. Nothing else in this file sets CI.
+ENV CI=1
+
+# The unprivileged identity every workspace runs as. uid/gid must match
+# WORKSPACE_UID / WORKSPACE_GID in src/core/kubernetes_container_provisioner.py:
+# the pod spec pins runAsUser/runAsGroup to those numbers, and if the image has
+# no matching passwd entry then $HOME resolves to "/" and every tool that writes
+# a cache fails in its own way.
+#
+# This comes AFTER every install above on purpose. Everything to this point —
+# apt, uv pip --system, npm -g, the smoke-check — needs root, and moving USER
+# earlier would break the build rather than harden it. Only what runs at
+# CONTAINER start needs to be unprivileged, and that is just the sleep and
+# whatever /exec runs against the repository.
+RUN groupadd --gid 1000 coder \
+    && useradd --uid 1000 --gid 1000 --create-home --home-dir /home/coder \
+        --shell /bin/bash coder \
+    && mkdir -p /workspace \
+    && chown coder:coder /workspace /home/coder
+
+ENV HOME=/home/coder
+
+USER 1000:1000
+
+# Long-lived sleep — coding-analysis exec's commands in via kubectl exec.
+CMD ["sleep", "infinity"]

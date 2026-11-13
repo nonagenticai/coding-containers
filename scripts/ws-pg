@@ -1,0 +1,167 @@
+#!/bin/sh
+# ws-pg — a throwaway Postgres 18 on 127.0.0.1 inside a python+rust workspace pod.
+#
+# Baked into codegraph-runtime-rust (Dockerfile.runtime-rust). Runs as the
+# workspace user (uid 1000, non-root); data lives under /tmp (an emptyDir in the
+# pod), so it disappears with the pod and never touches /workspace (the checkout).
+#
+# CONTRACT (coding-testing's A2 runner depends on it — change both together):
+#   ws-pg start            idempotent; starts the server if needed, ensures the
+#                          default database ($WS_PG_DB, default "ws") and prints
+#                          ONLY its URL on stdout, e.g.
+#                          postgresql://coder@127.0.0.1:5432/ws
+#   ws-pg createdb <name>  starts the server if needed, creates a FRESH database
+#                          <name> (fails if it exists) and prints ONLY its URL
+#   ws-pg psql <db> -c <sql> [-c <sql>]...
+#                          runs SQL against database <db> on the loopback server.
+#                          The ONLY psql entry point a python+rust workspace has
+#                          (raw `psql` is not on the exec allowlist): host, port,
+#                          user and output flags are fixed here
+#                          (-X -q -A -t -v ON_ERROR_STOP=1), <db> must match
+#                          ^[a-z_][a-z0-9_]{0,62}$, only `-c <sql>` pairs are
+#                          accepted and an <sql> containing a backslash is
+#                          refused (no psql meta-commands: \connect, \!, ...).
+#   ws-pg url              prints the default database URL (server not touched)
+#   ws-pg status           exit 0 + "running" when up, exit 1 + "stopped" if not
+#   ws-pg stop             fast shutdown (idempotent)
+# Every failure exits non-zero with a "ws-pg: ..." message on stderr; logs never
+# go to stdout, so `DATABASE_URL="$(ws-pg start)"` is safe.
+#
+# Listens on 127.0.0.1 ONLY (unix socket in a private dir under /tmp), trust
+# auth: the only possible clients are processes in this pod.
+set -eu
+
+# libpq reads these from the environment and several of them can redirect a
+# connection regardless of -h (PGHOSTADDR wins over host, PGSERVICE pulls host
+# from a service file, PGOPTIONS injects server settings). Nothing here wants
+# them: every client call below names host/port/user explicitly.
+unset PGHOST PGHOSTADDR PGSERVICE PGSERVICEFILE PGPASSFILE PGOPTIONS
+
+PGDATA_DIR="${WS_PG_DATA:-/tmp/ws-pg/data}"
+RUN_DIR="${WS_PG_RUN:-/tmp/ws-pg/run}"
+PORT="${WS_PG_PORT:-5432}"
+DB="${WS_PG_DB:-ws}"
+USER_NAME="$(id -un 2>/dev/null || echo coder)"
+LOG="${RUN_DIR}/postgres.log"
+
+die() {
+    echo "ws-pg: $*" >&2
+    exit 1
+}
+
+valid_name() {
+    case "$1" in
+        "" | *[!A-Za-z0-9_]*) return 1 ;;
+    esac
+    [ "${#1}" -le 63 ]
+}
+
+valid_dbname() {
+    case "$1" in
+        "" | [!a-z_]* | *[!a-z0-9_]*) return 1 ;;
+    esac
+    [ "${#1}" -le 63 ]
+}
+
+# Validates `-c <sql>` pairs only; anything else (another flag, a positional,
+# a dangling -c, a backslash in the SQL) is refused before psql is ever run.
+check_sql_args() {
+    [ "$#" -ge 2 ] || die "usage: ws-pg psql <db> -c <sql> [-c <sql>]..."
+    while [ "$#" -gt 0 ]; do
+        [ "$1" = "-c" ] || die "ws-pg psql accepts only -c <sql> (refused: $1)"
+        [ "$#" -ge 2 ] || die "ws-pg psql: -c needs an SQL argument"
+        case "$2" in
+            *\\*) die "ws-pg psql: backslash in SQL refused (no psql meta-commands)" ;;
+        esac
+        shift 2
+    done
+}
+
+url_for() {
+    echo "postgresql://${USER_NAME}@127.0.0.1:${PORT}/$1"
+}
+
+running() {
+    [ -f "${PGDATA_DIR}/PG_VERSION" ] && pg_ctl -D "${PGDATA_DIR}" status >/dev/null 2>&1
+}
+
+q() {
+    psql -X -q -h 127.0.0.1 -p "${PORT}" -U "${USER_NAME}" -d postgres -v ON_ERROR_STOP=1 -tAc "$1"
+}
+
+db_exists() {
+    [ "$(q "SELECT 1 FROM pg_database WHERE datname = '$1'")" = "1" ]
+}
+
+ensure_server() {
+    mkdir -p "${RUN_DIR}" || die "cannot create ${RUN_DIR}"
+    if [ ! -f "${PGDATA_DIR}/PG_VERSION" ]; then
+        mkdir -p "${PGDATA_DIR}" || die "cannot create ${PGDATA_DIR}"
+        if ! initdb -D "${PGDATA_DIR}" -U "${USER_NAME}" --auth=trust \
+            --encoding=UTF8 --locale=C.UTF-8 >"${RUN_DIR}/initdb.log" 2>&1; then
+            cat "${RUN_DIR}/initdb.log" >&2
+            die "initdb failed (log above)"
+        fi
+    fi
+    if ! running; then
+        if ! pg_ctl -D "${PGDATA_DIR}" -l "${LOG}" -w -t 60 \
+            -o "-c listen_addresses=127.0.0.1 -p ${PORT} -c unix_socket_directories='${RUN_DIR}' -c fsync=off -c synchronous_commit=off -c full_page_writes=off" \
+            start >/dev/null 2>&1; then
+            tail -n 50 "${LOG}" >&2 2>/dev/null || true
+            die "postgres failed to start on 127.0.0.1:${PORT} (log above)"
+        fi
+    fi
+}
+
+valid_name "${DB}" || die "WS_PG_DB must match [A-Za-z0-9_]{1,63}"
+
+case "${1:-start}" in
+    start)
+        ensure_server
+        if ! db_exists "${DB}"; then
+            createdb -h 127.0.0.1 -p "${PORT}" -U "${USER_NAME}" "${DB}" >/dev/null \
+                || die "could not create database ${DB}"
+        fi
+        url_for "${DB}"
+        ;;
+    createdb)
+        name="${2:-}"
+        valid_name "${name}" || die "usage: ws-pg createdb <name>  (name: [A-Za-z0-9_]{1,63})"
+        ensure_server
+        db_exists "${name}" && die "database ${name} already exists"
+        createdb -h 127.0.0.1 -p "${PORT}" -U "${USER_NAME}" "${name}" >/dev/null \
+            || die "could not create database ${name}"
+        url_for "${name}"
+        ;;
+    psql)
+        shift
+        name="${1:-}"
+        valid_dbname "${name}" \
+            || die "usage: ws-pg psql <db> -c <sql>...  (db: ^[a-z_][a-z0-9_]{0,62}\$)"
+        shift
+        check_sql_args "$@"
+        running || die "server not running (run: ws-pg start)"
+        exec psql -X --no-psqlrc -q -A -t -v ON_ERROR_STOP=1 \
+            -h 127.0.0.1 -p "${PORT}" -U "${USER_NAME}" -d "${name}" "$@"
+        ;;
+    url)
+        url_for "${DB}"
+        ;;
+    status)
+        if running; then
+            echo "running"
+        else
+            echo "stopped"
+            exit 1
+        fi
+        ;;
+    stop)
+        if running; then
+            pg_ctl -D "${PGDATA_DIR}" -m fast -w stop >/dev/null 2>&1 || die "stop failed"
+        fi
+        echo "stopped"
+        ;;
+    *)
+        die "usage: ws-pg [start|createdb <name>|psql <db> -c <sql>...|url|status|stop]"
+        ;;
+esac

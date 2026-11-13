@@ -1,0 +1,10 @@
+# Local development overrides
+services:
+  coding-containers:
+    environment:
+      ENVIRONMENT: development
+      LOG_LEVEL: DEBUG
+      ENABLE_DOCS: "true"
+      ENABLE_AUTH: "false"
+    volumes:
+      - ./src:/app/src:ro

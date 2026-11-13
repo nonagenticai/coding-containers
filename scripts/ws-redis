@@ -1,0 +1,110 @@
+#!/bin/sh
+# ws-redis — a throwaway Redis-protocol server on 127.0.0.1 inside a workspace pod.
+#
+# Baked into codegraph-runtime (Dockerfile.runtime), so every toolchain has it.
+# The server is Valkey 8.1 (BSD-3, Redis-protocol compatible; redis-py, ioredis,
+# the `redis` crate all speak to it unchanged). Not Redis 7.4+: that is
+# RSALv2/SSPL, and these workspaces are a service offered to tenants.
+#
+# Runs as the workspace user (uid 1000, non-root); everything lives under /tmp
+# (the pod's emptyDir) and disappears with the pod.
+#
+# CONTRACT (callers exec it and read the URL from stdout):
+#   ws-redis start    idempotent; starts the server if needed and prints ONLY its
+#                     URL on stdout: redis://127.0.0.1:6379/0
+#   ws-redis url      prints the URL (server not touched)
+#   ws-redis status   exit 0 + "running" when it answers PING, exit 1 + "stopped"
+#   ws-redis stop     stop (idempotent), prints "stopped"
+# Every failure exits non-zero with a "ws-redis: ..." message on stderr.
+#
+# Shape, and why:
+#   * bind 127.0.0.1: only processes in this pod can connect
+#     (the coding-jobs NetworkPolicy admits other workspaces' pods).
+#   * no persistence (save "" / appendonly no): a recording dependency, not a store.
+#   * maxmemory 256mb, noeviction (Redis's own default policy, so a source behaves
+#     as it does in production when full: OOM errors, not silent key loss).
+#   * port, maxmemory and the run dir are fixed, not read from the environment.
+#   * pid file at /tmp/ws-redis/run/valkey.pid: `start`/`stop` use it.
+set -eu
+
+RUN_DIR=/tmp/ws-redis/run
+PORT=6379
+MAXMEM_MB=256
+PIDFILE="${RUN_DIR}/valkey.pid"
+LOG="${RUN_DIR}/valkey.log"
+
+die() {
+    echo "ws-redis: $*" >&2
+    exit 1
+}
+
+url() {
+    echo "redis://127.0.0.1:${PORT}/0"
+}
+
+ping() {
+    [ "$(valkey-cli -h 127.0.0.1 -p "${PORT}" ping 2>/dev/null)" = "PONG" ]
+}
+
+pid_alive() {
+    [ -f "${PIDFILE}" ] && kill -0 "$(cat "${PIDFILE}")" 2>/dev/null
+}
+
+case "${1:-start}" in
+    start)
+        if pid_alive && ping; then
+            url
+            exit 0
+        fi
+        mkdir -p "${RUN_DIR}" && chmod 0700 "${RUN_DIR}" || die "cannot create ${RUN_DIR}"
+        rm -f "${PIDFILE}"
+        valkey-server \
+            --bind 127.0.0.1 --port "${PORT}" \
+            --daemonize yes --pidfile "${PIDFILE}" --logfile "${LOG}" --dir "${RUN_DIR}" \
+            --save "" --appendonly no \
+            --maxmemory "${MAXMEM_MB}mb" --maxmemory-policy noeviction \
+            >/dev/null 2>&1 || {
+            tail -n 30 "${LOG}" >&2 2>/dev/null || true
+            die "valkey-server failed to start on 127.0.0.1:${PORT} (log above)"
+        }
+        i=0
+        while [ "$i" -lt 100 ]; do
+            if ping; then
+                url
+                exit 0
+            fi
+            i=$((i + 1))
+            sleep 0.1
+        done
+        tail -n 30 "${LOG}" >&2 2>/dev/null || true
+        die "valkey-server did not answer PING on 127.0.0.1:${PORT} within 10s (log above)"
+        ;;
+    url)
+        url
+        ;;
+    status)
+        if ping; then
+            echo "running"
+        else
+            echo "stopped"
+            exit 1
+        fi
+        ;;
+    stop)
+        if pid_alive; then
+            pid="$(cat "${PIDFILE}")"
+            kill "${pid}" 2>/dev/null || true
+            i=0
+            while kill -0 "${pid}" 2>/dev/null && [ "$i" -lt 100 ]; do
+                i=$((i + 1))
+                sleep 0.1
+            done
+            kill -0 "${pid}" 2>/dev/null && kill -9 "${pid}" 2>/dev/null || true
+        fi
+        rm -f "${PIDFILE}"
+        echo "stopped"
+        ;;
+    *)
+        die "usage: ws-redis [start|url|status|stop]"
+        ;;
+esac

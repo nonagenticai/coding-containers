@@ -1,0 +1,169 @@
+[project]
+name = "coding-containers"
+version = "1.2.0"
+license = { text = "Apache-2.0" }
+description = "Container Management Service - Docker lifecycle, code execution, agents, provisioning"
+authors = [{name = "Nonagentic", email = "dev@nonagentic.ai"}]
+requires-python = ">=3.14"
+dependencies = [
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.35.0",
+    "gunicorn>=23.0.0",
+    "pydantic>=2.12.5",
+    "pydantic-settings>=2.12.0",
+    "httpx>=0.28.0",
+    "redis>=7.1.0",
+    "structlog>=24.4.0",
+    "sqlalchemy[asyncio]>=2.0",
+    "psycopg[binary,pool]>=3.2.0",
+    # Schema migrations for the coding_containers DB (async exec job store);
+    # applied by the Deployment's `alembic upgrade head` initContainer, as coding-analysis.
+    "alembic>=1.16.0",
+    "coding-client>=1.19.5",  # >=1.11.0: auth.outbound.{tenant_headers,optional_tenant_headers} take service_token=, so this service can present its OWN licence in Authorization while X-Tenant-Id still names the CUSTOMER (on-behalf-of vouching). 1.10.1 only added the callee half: AuthMiddleware introspecting the licence Bearer.
+    # Container-specific
+    "docker>=7.1.0",
+    "kubernetes>=27.2.0",
+    "kubernetes-asyncio>=24.2.0",
+    # OpenTelemetry
+    "opentelemetry-api>=1.45.1",  # CVE-2026-114603 fixed in 1.45.1
+    "opentelemetry-sdk>=1.24.0",
+    "opentelemetry-exporter-otlp-proto-http>=1.24.0",
+    "opentelemetry-instrumentation-fastapi>=0.53b1",
+    # Additional runtime dependencies
+    "tenacity>=8.2.0",
+    "aiosqlite>=0.20.0",
+    # Floor raised to 1.102.0 for GHSA-cg7w-rg45-pc59 (SSRF via IPv6 transition forms; fixed 1.102.0).
+    # Keep the <2.0.0 ceiling — unconstrained the resolver jumps to 2.0.0.
+    "pydantic-ai>=1.107.7,<2.0.0",
+    # requests removed — replaced by httpx (CVE-2026-25645)
+    "aiofiles>=24.1.0",
+    "pyyaml>=6.0",
+    "cachetools>=5.3.0",
+    "PyGithub>=2.0.0",
+    # Security floor: pin pyasn1 ≥ 0.6.5 for PYSEC-2026-3455/3456/3457 and
+    # CVE-2026-119194/119195/119196/119197 (0.6.4 is the last affected; all six
+    # are fixed in 0.6.5). Transitive (pyasn1-modules ← google-auth); floored
+    # here because the archetype's pip-audit gate is repo-scoped.
+    "pyasn1>=0.6.5",
+    # Security floor: pin joserfc ≥ 1.7.7 for CVE-2026-119283 (fixed in 1.7.5)
+    # and CVE-2026-119284 (fixed in 1.7.6). Transitive (joserfc ← authlib ←
+    # fastmcp ← pydantic-ai); floored for the same repo-scoped pip-audit reason
+    # as pyasn1. 1.7.7 is the version this repo is actually tested at.
+    "joserfc>=1.7.7",
+    # Security floor: pin httpx2 ≥ 2.12.0 for PYSEC-2026-3846/3848/3849 and,
+    # via its `httpcore2==2.12.0` pin, PYSEC-2026-3844. Transitive
+    # (httpx2 ← genai-prices, which asks only for >=2.0) — NOT used directly;
+    # this project's own HTTP client is `httpx` above.
+    # ⚠️ Floored rather than left to the lock because the upgrade is only
+    # reachable when `idna` moves too: httpx2 >= 2.10.0 hard-requires
+    # idna >= 3.18, and with the lock preferring idna 3.16 a bare
+    # `uv lock --upgrade-package httpx2 --upgrade-package httpcore2` resolved
+    # 203 packages and changed NOTHING — a silent no-op that reads as success.
+    # A floor makes that regression unrepresentable instead of relying on the
+    # resolver's preference-preserving behaviour.
+    "httpx2>=2.12.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=9.0.2",
+    "pytest-asyncio>=0.24.0",
+    "pytest-cov>=6.0.0",
+    "ruff==0.15.14",
+    "ty==0.0.39",
+    "respx>=0.22.0",
+]
+
+[build-system]
+requires = ["setuptools>=75.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.2",
+    "pytest-asyncio>=0.24.0",
+    "pytest-cov>=6.0.0",
+    "ruff==0.15.14",
+    "detect-secrets",
+    "pip-audit>=2.10.0",
+    "ty==0.0.39",
+    "respx>=0.22.0",
+    # PYSEC-2026-3721: pip 26.1.2 is vulnerable (transitive via pip-audit -> pip-api -> pip); explicit floor so a re-lock cannot regress
+    "pip>=26.2",
+]
+
+[tool.uv]
+constraint-dependencies = [
+    # 2026-10-25 pip-audit: fastmcp GHSA-7xgj-8392-5q4r (fix 3.4.10), filelock
+    # CVE-2026-112907/112913/112940 (fix 4.2.1); both transitive (opentelemetry-api
+    # CVE-2026-114603 is floored in [project].dependencies above).
+    "fastmcp>=3.4.10",
+    "filelock>=4.2.1",
+    # otel-api 1.45.1 drags otel-semantic-conventions to ==0.66b1, which mistralai <=2.9.0
+    # caps at <0.61; left free, uv jumps mistralai 2->3 (httpx -> httpx2 rewrite). This
+    # service never imports mistralai (transitive via pydantic-ai[mistral]); hold 2.x.
+    "mistralai<3",
+]
+
+[tool.uv.sources]
+coding-client = { git = "https://github.com/nonagenticai/coding-client", rev = "f7f25b4e81fe4390586108a7a731608dacf462fd" }
+
+[tool.ruff]
+line-length = 100
+target-version = "py314"
+src = ["."]
+# vendor/hunt-agent/agent is a byte-for-byte copy of coding-analysis src/hunt_agent
+# (pinned by agent_sha); formatting it here would change the sha and fail every hunt.
+# force-exclude so pre-commit, which passes filenames explicitly, honours it too.
+extend-exclude = ["vendor/hunt-agent/agent"]
+force-exclude = true
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "W", "UP"]
+ignore = ["E501"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["src", "coding_client"]
+
+[tool.ty]
+
+[tool.ty.src]
+include = ["src"]
+
+
+[tool.ty.environment]
+python-version = "3.14"
+
+[tool.ty.rules]
+unresolved-import = "ignore"
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+pythonpath = ["."]
+testpaths = ["tests"]
+addopts = "-v --cov=src --cov-report=term-missing -m 'not integration'"
+markers = [
+    "integration: marks tests as integration tests",
+    "e2e: marks tests as end-to-end tests",
+]
+
+[tool.coverage.run]
+source = ["src"]
+concurrency = ["greenlet", "thread"]
+# Executed only as `python3 -I -c <source>` in a separate process (in the workspace
+# pod, and as a real subprocess in tests/unit/test_workspace_services.py), so the
+# in-process tracer can never see it run.
+omit = ["src/services/workspace_services/pod_program.py"]
+
+[tool.coverage.report]
+fail_under = 85
+
+[tool.bandit]
+# Accepted-risk suppression (honoured in CI via `bandit -c pyproject.toml`).
+# B108 (hardcoded /tmp): every hit is a tmpfs/k8s volume-mount spec, a HOME=/tmp
+# env value, or a `secrets.token_hex`-suffixed temp path — not insecure tempfile
+# creation. Real findings (MD5 cache keys, tar extractall) are fixed in code, not skipped.
+skips = ["B108"]

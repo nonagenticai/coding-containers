@@ -1,0 +1,66 @@
+name: CI
+
+# The public pipeline: nonagenticai/ci-workflows/python-service.yml on GitHub-hosted runners,
+# with no repository secrets, publishing ghcr.io/nonagenticai/coding-containers from main.
+#
+# There is no deploy job. Flux watches the ImagePolicy for this service and rolls it when the
+# image changes — the repo never holds cluster credentials.
+#
+# While this repository was private it ran the private deployment archetype; that job is gone
+# rather than gated because GitHub parses a called workflow even when the calling job's `if:`
+# is false, so a public repository that keeps a private `uses:` cannot dispatch CI at all.
+#
+# The two runtime images (codegraph-runtime, codegraph-runtime-rust) are NOT built here —
+# they have their own triggers and live in runtime-image.yaml.
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  ci:
+    uses: nonagenticai/ci-workflows/.github/workflows/python-service.yml@main
+    permissions:
+      contents: read
+      packages: write
+    with:
+      image_name: coding-containers
+      src_dir: src
+      # Per-job ephemeral postgres:18 sidecar + `alembic upgrade head`: the async
+      # exec job store (exec_jobs) is tested against real Postgres, not a mock.
+      has_postgres: true
+      database_name: coding_containers_ci
+      alembic: true
+      # checks/ oracles sit outside pytest testpaths (pytest checks/ collects 0,
+      # exit 5), so they never gated a build. checks.branch_name_anchor grades a
+      # branch-name registry defect: rc=0 on the fix, rc=1 with named assertion
+      # failures on its parent.
+      oracle_modules: checks.branch_name_anchor
+      # This image's multi-stage build crossed the old 30-min default under runner
+      # contention (a cancelled build reports as *pending*, not red).
+      build_timeout_minutes: 50
+      build_smoke: |
+        set -euo pipefail
+        docker run -d --name smoke-coding-containers \
+          -e ENABLE_AUTH=false \
+          -e CODING_CONTAINERS_ENVIRONMENT=testing \
+          -e CODING_CONTAINERS_MAIN_API_ENDPOINT=http://localhost:9999 \
+          -e CODING_CONTAINERS_REDIS__HOST=localhost \
+          -e CODING_CONTAINERS_REDIS__PORT=6379 \
+          -e CODING_CONTAINERS_REDIS__DB=0 \
+          -p 18691:8691 "$IMAGE_REF"
+        ok=0
+        for i in $(seq 1 30); do
+          if curl -sf http://localhost:18691/health >/dev/null 2>&1; then
+            echo "health ok (attempt $i)"; ok=1; break
+          fi
+          sleep 1
+        done
+        docker logs smoke-coding-containers || true
+        docker rm -f smoke-coding-containers || true
+        [ "$ok" -eq 1 ]

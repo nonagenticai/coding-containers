@@ -1,0 +1,33 @@
+version: "3.8"
+
+services:
+  coding-containers:
+    build: .
+    ports:
+      - "18691:8691"
+    environment:
+      - ENABLE_AUTH=false
+      - ENVIRONMENT=testing
+      - REDIS_URL=redis://redis:6379/0
+      - CODING_GITHUB_URL=http://coding-github:8692
+      - CODING_REALTIME_URL=http://coding-realtime:8694
+      - CODING_SECURITY_URL=http://coding-security:8693
+      - CODING_TESTING_URL=http://coding-testing:8689
+    depends_on:
+      - redis
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8691/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "16379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 3

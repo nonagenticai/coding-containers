@@ -1,0 +1,195 @@
+{
+  "apiVersion": "apps/v1",
+  "kind": "Deployment",
+  "metadata": {
+    "annotations": {
+      "coding-job/branch": "main",
+      "coding-job/repo-url": "https://github.com/example-org/py2rs-fixture-svc",
+      "coding-job/secret-config-id": "sec-snapshot",
+      "coding-job/tenant-id": "0195f48b-d000-7000-8000-000000000001"
+    },
+    "labels": {
+      "app": "codegraph-repo",
+      "coding-job": "true",
+      "created-at": "1767225600",
+      "managed-by": "code-graph-helper",
+      "repo": "snapshot-ws",
+      "tenant-id": "0195f48b-d000-7000-8000-000000000001",
+      "ttl-class": "default"
+    },
+    "name": "snapshot-ws",
+    "namespace": "coding-jobs"
+  },
+  "spec": {
+    "replicas": 1,
+    "selector": {
+      "matchLabels": {
+        "app": "codegraph-repo",
+        "repo": "snapshot-ws"
+      }
+    },
+    "strategy": {
+      "type": "Recreate"
+    },
+    "template": {
+      "metadata": {
+        "annotations": {
+          "coding-job/provisioned-at": "1767225600"
+        },
+        "labels": {
+          "app": "codegraph-repo",
+          "coding-job": "true",
+          "istio.io/dataplane-mode": "ambient",
+          "repo": "snapshot-ws",
+          "ttl-class": "default"
+        }
+      },
+      "spec": {
+        "affinity": {
+          "nodeAffinity": {
+            "requiredDuringSchedulingIgnoredDuringExecution": {
+              "nodeSelectorTerms": [
+                {
+                  "matchExpressions": [
+                    {
+                      "key": "node-role.kubernetes.io/control-plane",
+                      "operator": "DoesNotExist"
+                    }
+                  ]
+                }
+              ]
+            }
+          }
+        },
+        "containers": [
+          {
+            "args": [
+              "trap 'exit 0' TERM INT; while :; do sleep 86400 & wait $!; done"
+            ],
+            "command": [
+              "/bin/sh",
+              "-c"
+            ],
+            "env": [
+              {
+                "name": "NPM_CONFIG_USERCONFIG",
+                "value": "/tmp/.npmrc"
+              },
+              {
+                "name": "HOME",
+                "value": "/home/coder"
+              },
+              {
+                "name": "GIT_CONFIG_PARAMETERS",
+                "value": "'safe.directory'='/workspace'"
+              }
+            ],
+            "image": "ghcr.io/nonagenticai/codegraph-runtime:sha-snapshot@sha256:0000000000000000000000000000000000000000000000000000000000000000",
+            "imagePullPolicy": "IfNotPresent",
+            "name": "analysis",
+            "resources": {
+              "limits": {
+                "cpu": "500m",
+                "memory": "2Gi"
+              },
+              "requests": {
+                "cpu": "10m",
+                "memory": "256Mi"
+              }
+            },
+            "securityContext": {
+              "allowPrivilegeEscalation": false,
+              "capabilities": {
+                "drop": [
+                  "ALL"
+                ]
+              }
+            },
+            "volumeMounts": [
+              {
+                "mountPath": "/workspace",
+                "name": "repo-data"
+              },
+              {
+                "mountPath": "/tmp",
+                "name": "tmp"
+              }
+            ]
+          }
+        ],
+        "initContainers": [
+          {
+            "args": [
+              "if [ ! -d /workspace/.git ]; then find /workspace -mindepth 1 -delete 2>/dev/null || true; { git -c credential.helper= -c 'credential.https://github.com.helper=!f() { test \"$1\" = get || { cat >/dev/null; return 0; }; s=; h=; p=; while IFS= read -r l; do case \"$l\" in protocol=*) s=\"${l#protocol=}\";; host=*) h=\"${l#host=}\";; path=*) p=\"${l#path=}\";; esac; done; if test \"$s\" = https && test \"$h\" = github.com && { test \"$p\" = example-org/py2rs-fixture-svc || test \"$p\" = example-org/py2rs-fixture-svc.git; } && test -n \"$GIT_TOKEN\"; then printf \"username=x-access-token\\npassword=%s\\n\" \"$GIT_TOKEN\"; fi; }; f' -c credential.useHttpPath=true -c core.askPass= clone --depth 1 --branch main https://github.com/example-org/py2rs-fixture-svc /workspace; } || { find /workspace -mindepth 1 -delete 2>/dev/null || true; exit 1; }; fi && { if git -c safe.directory=/workspace -C /workspace config --get remote.origin.url >/dev/null 2>&1; then git -c safe.directory=/workspace -C /workspace remote set-url origin https://github.com/example-org/py2rs-fixture-svc; fi && { urls=$(git -c safe.directory=/workspace -C /workspace config --get-regexp '^remote\\..*url$' 2>/dev/null); case \"$urls\" in *@*) false;; esac; } && { [ -z \"$GIT_TOKEN\" ] || [ -z \"$(find /workspace/.git -path /workspace/.git/objects -prune -o -type f -exec grep -lF -e \"$GIT_TOKEN\" {} \\;)\" ]; }; } || { echo 'git-clone: a credential remains under .git; refusing the checkout' >&2; exit 1; }"
+            ],
+            "command": [
+              "/bin/sh",
+              "-c"
+            ],
+            "env": [
+              {
+                "name": "GIT_TOKEN",
+                "valueFrom": {
+                  "secretKeyRef": {
+                    "key": "GIT_TOKEN",
+                    "name": "snapshot-ws-git-token"
+                  }
+                }
+              }
+            ],
+            "image": "alpine/git:latest",
+            "name": "git-clone",
+            "resources": {
+              "limits": {
+                "cpu": "1",
+                "memory": "512Mi"
+              },
+              "requests": {
+                "cpu": "100m",
+                "memory": "128Mi"
+              }
+            },
+            "securityContext": {
+              "allowPrivilegeEscalation": false,
+              "capabilities": {
+                "drop": [
+                  "ALL"
+                ]
+              }
+            },
+            "volumeMounts": [
+              {
+                "mountPath": "/workspace",
+                "name": "repo-data"
+              }
+            ]
+          }
+        ],
+        "nodeSelector": {
+          "kubernetes.io/arch": "amd64"
+        },
+        "securityContext": {
+          "fsGroup": 1000,
+          "fsGroupChangePolicy": "OnRootMismatch",
+          "runAsGroup": 1000,
+          "runAsNonRoot": true,
+          "runAsUser": 1000,
+          "seccompProfile": {
+            "type": "RuntimeDefault"
+          }
+        },
+        "serviceAccountName": "code-graph-helper-sa",
+        "volumes": [
+          {
+            "emptyDir": {},
+            "name": "repo-data"
+          },
+          {
+            "emptyDir": {},
+            "name": "tmp"
+          }
+        ]
+      }
+    }
+  }
+}

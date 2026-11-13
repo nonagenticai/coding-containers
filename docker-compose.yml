@@ -1,0 +1,50 @@
+services:
+  coding-containers:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: coding-containers
+
+    environment:
+      SERVICE_NAME: coding-containers
+      VERSION: 1.0.0
+      ENVIRONMENT: production
+      LOG_LEVEL: INFO
+      LOG_FORMAT: json
+      PORT: 8691
+      DEFAULT_TENANT_ID: n8n-dev
+      ENABLE_AUTH: "true"
+      ENABLE_DOCS: "true"
+
+      # Database: this service's OWN `coding_containers` DB (async exec job store).
+      # These used to name `code_graph` as user `coding` — another service's DB,
+      # unread until the job store made them live. Unset = async exec answers 503.
+      DATABASE_URL: ${CODING_CONTAINERS_DATABASE_URL:-}
+
+      # Redis
+      REDIS_URL: redis://code-graph-redis:6379/0
+
+      # OpenTelemetry
+      OTLP_TRACES_ENDPOINT: http://grafana-agent:4318/v1/traces
+      OTEL_SERVICE_NAME: coding-containers
+      OTEL_SDK_DISABLED: "false"
+
+    ports:
+      - "0.0.0.0:8691:8691"
+
+    networks:
+      - workflow-system-network
+
+    restart: unless-stopped
+
+
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8691/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+networks:
+  workflow-system-network:
+    driver: bridge

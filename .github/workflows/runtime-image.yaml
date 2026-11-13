@@ -1,0 +1,105 @@
+# Runtime images for provisioned workspace pods.
+#
+#   codegraph-runtime       python toolchain: uv, node/npm, semgrep, ws-redis,
+#                           the vendored bug-hunt agent, pytest/ruff/ty
+#   codegraph-runtime-rust  the above + rust 1.99 + a loopback Postgres (ws-pg),
+#                           for `toolchain: python+rust` workspaces
+#
+# The build/push itself is the public archetype (ci-workflows/image-only.yml).
+# This file holds only what a reusable workflow cannot: TRIGGERS (path filters,
+# the weekly re-bake cron, manual dispatch) and the repo-specific pre-build gate.
+#
+# ⚠️ A GREEN RUN HERE IS NOT A ROLLED FLEET. Provisioned pods use
+# `imagePullPolicy: IfNotPresent` and the deployment pins these images by DIGEST,
+# so a re-pushed floating tag does NOT reach nodes. CI pushes and PRINTS the pin
+# in the run summary; moving the pin is a separate, deliberate step.
+name: Runtime image
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'Dockerfile.runtime'
+      - 'Dockerfile.runtime-rust'
+      - 'scripts/ws-pg'
+      - 'scripts/ws-redis'
+      - 'scripts/runtime-smoke.sh'
+      - 'scripts/runtime-rust-smoke.sh'
+      - 'scripts/check-hunt-agent-vendor.py'
+      - 'vendor/hunt-agent/**'
+      - '.github/workflows/runtime-image.yaml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'Dockerfile.runtime'
+      - 'Dockerfile.runtime-rust'
+      - 'scripts/ws-pg'
+      - 'scripts/ws-redis'
+      - 'scripts/runtime-smoke.sh'
+      - 'scripts/runtime-rust-smoke.sh'
+      - 'scripts/check-hunt-agent-vendor.py'
+      - 'vendor/hunt-agent/**'
+      - '.github/workflows/runtime-image.yaml'
+  # Weekly re-bake: the base image and the baked toolchain drift even when this
+  # repo does not. A path-triggered job alone would go quiet for months, which is
+  # the exact failure mode this workflow was created to end. A scheduled run
+  # publishes (image-only.yml treats `schedule` on main like a main push).
+  schedule:
+    - cron: '23 5 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: runtime-image-${{ github.repository }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  drift:
+    # The vendored bug-hunt agent must be self-consistent BEFORE it is baked:
+    # MANIFEST.sha256 recomputed from the vendored *.py, sha256(MANIFEST) ==
+    # PIN.json agent_sha, and the pinned packages == tree-sitter + every grammar
+    # in hunt.py. coding-analysis fails any hunt whose agent_sha it does not
+    # expect, so a drifted copy would ship as a fleet-wide outage.
+    #
+    # A plain caller job, not an image-only step: a reusable workflow's jobs run
+    # after the caller's, so the gate has to be its own job and the image jobs
+    # `needs:` it. (The byte-for-byte check against coding-analysis itself,
+    # `source`, is NOT run: it needs a credential for that repository.)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - name: Hunt agent vendor drift check
+        run: python3 scripts/check-hunt-agent-vendor.py check
+
+  runtime:
+    needs: drift
+    permissions:
+      contents: read
+      packages: write
+    uses: nonagenticai/ci-workflows/.github/workflows/image-only.yml@main
+    with:
+      image_name: codegraph-runtime
+      dockerfile: Dockerfile.runtime
+      # Bakes semgrep + node + npm globals; a cold build needs headroom.
+      build_timeout_minutes: 60
+      build_smoke: bash scripts/runtime-smoke.sh "$IMAGE_REF"
+
+  runtime-rust:
+    # FROM the tag the job above just pushed, so the two can never drift apart
+    # and a python+rust workspace is a strict superset of a python one. A fork
+    # PR pushes nothing (empty image_ref), so this job is gated off there.
+    needs: [drift, runtime]
+    if: needs.runtime.outputs.image_ref != ''
+    permissions:
+      contents: read
+      packages: write
+    uses: nonagenticai/ci-workflows/.github/workflows/image-only.yml@main
+    with:
+      image_name: codegraph-runtime-rust
+      dockerfile: Dockerfile.runtime-rust
+      build_timeout_minutes: 60
+      build_args: BASE_IMAGE=${{ needs.runtime.outputs.image_ref }}
+      build_smoke: bash scripts/runtime-rust-smoke.sh "$IMAGE_REF"

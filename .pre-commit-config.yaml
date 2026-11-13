@@ -1,0 +1,70 @@
+# vendor/hunt-agent/agent is a byte-for-byte vendored copy pinned by sha256
+# (vendor/hunt-agent/PIN.json): no hook may rewrite it.
+exclude: ^vendor/hunt-agent/agent/
+
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.15.7
+    hooks:
+      - id: ruff
+        args: [--fix, --exit-non-zero-on-fix]
+        types_or: [python, pyi]
+      - id: ruff-format
+        types_or: [python, pyi]
+
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+        args: [--unsafe]
+      - id: check-added-large-files
+        args: [--maxkb=1024]
+      - id: check-merge-conflict
+      - id: detect-private-key
+
+  - repo: https://github.com/hadolint/hadolint
+    rev: v2.12.0
+    hooks:
+      - id: hadolint-docker
+        args: [--ignore, DL3008, --ignore, DL3013]
+
+  - repo: https://github.com/Yelp/detect-secrets
+    rev: v1.5.0
+    hooks:
+      - id: detect-secrets
+        args: [--baseline, .secrets.baseline]
+        exclude: uv.lock
+
+  - repo: local
+    hooks:
+      - id: ruff-format-check
+        name: ruff format --check (pre-push gate)
+        entry: uv run ruff format --check .
+        language: system
+        types: [python]
+        pass_filenames: false
+        stages: [pre-push]
+      - id: ty
+        name: ty type checking
+        entry: uv run ty check src/
+        language: system
+        types: [python]
+        pass_filenames: false
+        stages: [pre-push]
+
+      - id: pytest-unit
+        name: pytest unit tests
+        entry: uv run pytest tests/unit -v --tb=short -x
+        language: system
+        types: [python]
+        pass_filenames: false
+        stages: [pre-push]
+
+      - id: pip-audit
+        name: pip-audit security scan (uv-export → pip-audit)
+        entry: scripts/pip-audit.sh
+        language: system
+        pass_filenames: false
+        stages: [pre-push]

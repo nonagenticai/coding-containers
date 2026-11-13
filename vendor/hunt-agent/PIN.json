@@ -1,0 +1,19 @@
+{
+  "_comment": "VENDORED - do not edit agent/ by hand. agent/ is a byte-for-byte copy of nonagenticai/coding-analysis src/hunt_agent at source_ref; agent_sha = sha256(agent/MANIFEST.sha256); python_packages = coding-analysis uv.lock pins for tree-sitter + every grammar in hunt.py GRAMMARS. Verified by scripts/check-hunt-agent-vendor.py (check | source | image-smoke).",
+  "source_repo": "nonagenticai/coding-analysis",
+  "source_path": "src/hunt_agent",
+  "source_ref": "138c2a01eba1a063c6c3cbd28696c501e1a20b75",
+  "source_branch_head": "16828abe8549134236e88d1e2ced54bffe7831d5",
+  "agent_sha": "46156690efc29e1c3982a4dd0618e59991fe41a3d0cf30c8f910f264f785d8b0",
+  "python_packages": {
+    "tree-sitter": "0.25.2",
+    "tree-sitter-c-sharp": "0.23.5",
+    "tree-sitter-cpp": "0.23.4",
+    "tree-sitter-go": "0.25.0",
+    "tree-sitter-java": "0.23.5",
+    "tree-sitter-javascript": "0.25.0",
+    "tree-sitter-python": "0.25.0",
+    "tree-sitter-rust": "0.24.2",
+    "tree-sitter-typescript": "0.23.2"
+  }
+}

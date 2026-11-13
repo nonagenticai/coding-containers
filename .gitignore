@@ -1,0 +1,74 @@
+# Environment variables
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+dist/
+*.egg-info/
+*.egg
+.venv/
+venv/
+
+# Testing
+.pytest_cache/
+.coverage
+coverage.xml
+coverage.json
+htmlcov/
+coverage_html/
+
+# Linting/Type checking
+.ruff_cache/
+.mypy_cache/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+._*
+
+# Secrets
+*.pem
+*.key
+*.crt
+credentials.json
+
+# Docker
+docker-compose.yml.bak*
+docker-compose.yml.backup*
+
+# Logs
+logs/*.log
+
+# Certs
+certs/*
+!certs/.gitkeep
+
+# Build artifacts
+.local-ci-commit.txt
+.local-ci-push.txt
+
+# Editor configs
+.cursor/
+.windsurf/
+.claude/
+
+# CI failure reports
+01_recent_push_failure.txt
+
+# Sibling git worktrees. This repo is edited by several agents at once and the
+# convention is `git worktree add .worktrees/<slug>`; without this rule a plain
+# `git add -A` stages each one as a gitlink (mode 160000) and commits a
+# submodule nobody asked for.
+.worktrees/
