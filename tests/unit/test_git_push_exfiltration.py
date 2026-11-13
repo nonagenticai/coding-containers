@@ -143,6 +143,12 @@ def _base_env(root: Path) -> dict[str, str]:
     # A clean "system" file stands in for the image's /etc/gitconfig, so the
     # host's own (e.g. osxkeychain) never leaks into the assertion.
     env.update(HOME=str(home), GIT_CONFIG_SYSTEM=str(system), GIT_TERMINAL_PROMPT="0")
+    # ⚠️ XDG_CONFIG_HOME is SET on GitHub-hosted runners. Inherited, git reads
+    # <host>/.config/git/config and ignores the $HOME/.config the `xdg` variants
+    # write, so their trace2 config is never loaded and no trace file appears
+    # (measured: the three [*-xdg] cases are the only ones red on a hosted runner).
+    # Pin it into the scratch home so both `where` variants are hermetic.
+    env["XDG_CONFIG_HOME"] = str(home / ".config")
     if _APPLE_GIT:
         env["GIT_CONFIG_NOSYSTEM"] = "1"
     return env

@@ -407,7 +407,12 @@ def test_admitted_git_config_pairs_stack_on_the_pods_safe_directory(tmp_path):
         pytest.skip("needs git")
     repo = tmp_path.resolve() / "ws"
     # A clean env everywhere: a git hook's GIT_DIR would otherwise redirect these calls.
-    plain = {"PATH": "/usr/bin:/bin", "HOME": str(tmp_path)}
+    # ⚠️ GIT_CONFIG_NOSYSTEM is load-bearing, not tidiness: GitHub-hosted runners ship
+    # `[safe] directory = *` in /etc/gitconfig (so mounted workspaces are usable), which
+    # makes the negative control below pass git's ownership check and return 0 instead of
+    # the expected "dubious ownership". Measured on a hosted runner, and reproduced
+    # locally with GIT_CONFIG_SYSTEM pointing at a file carrying that key.
+    plain = {"PATH": "/usr/bin:/bin", "HOME": str(tmp_path), "GIT_CONFIG_NOSYSTEM": "1"}
     subprocess.run(["git", "init", "-q", str(repo)], env=plain, check=True)  # noqa: S607
     caller = {k: v for k, v in ADMITTED.items() if k.startswith("GIT_CONFIG_")}
     assert set(caller) == {"GIT_CONFIG_COUNT", "GIT_CONFIG_KEY_0", "GIT_CONFIG_VALUE_0"}
