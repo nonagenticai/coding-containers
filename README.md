@@ -52,8 +52,8 @@ Auth is provided by `coding_client.auth.middleware.AuthMiddleware` (from the `co
 
 **How it works:**
 1. **Istio-forwarded headers** -- `x-user-id`, `x-tenant-id`, `x-user-roles`, `x-user-name`, `x-user-email`. Set by the Istio mesh / gateway after license-authz validation.
-2. **License token introspection** -- if no Istio headers, a `Bearer` token in the `Authorization` header is introspected against `licenses.licenses.svc.cluster.local:8544/license/introspect` to extract tenant context.
-3. **Trusted-network bypass** -- requests from RFC1918/loopback IPs with no headers get a default tenant context (`DEFAULT_TENANT_ID`, default `n8n-dev`).
+2. **License token introspection** -- if no Istio headers, a `Bearer` token in the `Authorization` header is introspected against the licences service at `LICENSE_INTROSPECT_URL` (the deployment points it at `licenses.licenses.svc.cluster.local:8544/license/introspect`) to extract tenant context. When the URL is unset, a `Bearer` licence is never introspected.
+3. **Trusted-network bypass** -- requests from RFC1918/loopback IPs with no headers are admitted as the tenant named by `DEFAULT_TENANT_ID`. There is no built-in default: when the variable is unset, a credential-less request is refused rather than assigned a tenant.
 4. **Dev/test API key** -- when `ENVIRONMENT=development` or `testing`, a `Bearer` token matching `DEV_API_KEY` or `TEST_API_KEY` is accepted.
 
 Public (unauthenticated) paths: `/`, `/health`, `/ready`, `/metrics`, `/openapi.json`, `/docs`, `/redoc`.
@@ -154,7 +154,8 @@ Environment variables used by this service (prefix `CODING_CONTAINERS_` for pyda
 | `ENVIRONMENT` | `production` | Environment name (`development`/`testing` enables API key auth) |
 | `ENABLE_AUTH` | `true` | Enable `AuthMiddleware` from coding-client |
 | `ENABLE_DOCS` | `false` | Expose Swagger UI at `/docs` |
-| `DEFAULT_TENANT_ID` | `n8n-dev` | Default tenant for trusted-network requests |
+| `DEFAULT_TENANT_ID` | (unset) | Tenant granted to credential-less trusted-network requests. No built-in default: unset refuses such requests instead of assigning a tenant. |
+| `LICENSE_INTROSPECT_URL` | (unset) | Licences-service introspection endpoint used to resolve a `Bearer` licence token. Unset disables licence introspection; identity then comes only from mesh-forwarded headers. |
 | `CODING_CONTAINERS_DOCKER_BASE_PORT` | `8700` | Starting port for provisioned containers |
 | `CODING_CONTAINERS_MAIN_API_ENDPOINT` | `http://localhost:8100` | Main API endpoint URL |
 | `CODING_CONTAINERS_TEMP_DIR` | `/tmp` | Temporary directory |
@@ -208,7 +209,8 @@ src/
     agents.py                      # POST execute-agent, GET agent-capabilities
     container_dependencies.py      # POST install-dependencies, GET dependency-status
     container_exec.py              # POST exec (whitelisted command execution)
-    containers.py                  # CRUD, file ops, git ops, file listing
+    containers/                    # CRUD, file ops, git ops, file listing (split by concern)
+    workspaces/                    # canonical /api/workspaces surface (legacy_compat re-exports)
     health.py                      # Container health, readiness, liveness, statistics
     validation.py                  # Multi-line code snippet validation
   services/
