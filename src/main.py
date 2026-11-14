@@ -2,7 +2,7 @@
 
 import logging
 import os
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 
 import docker.errors
@@ -45,7 +45,7 @@ ENABLE_AUTH = os.getenv("ENABLE_AUTH", "true").lower() == "true"
 
 
 @asynccontextmanager
-async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
     """Application lifespan events."""
     logger.info(f"Starting {SERVICE_NAME} v{VERSION} ({ENVIRONMENT})")
 

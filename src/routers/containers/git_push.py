@@ -328,11 +328,11 @@ def _push_exec_prelude() -> str:
 
 #: The push never recurses into a submodule (see ``_SUBMODULE_CONFIG_RE``); the flag
 #: beats any ``push.recurseSubmodules`` config, and the shared ``-c`` pins it too.
-_PUSH_NO_RECURSE_FLAG = "--no-recurse-submodules"
+_PUSH_NO_RECURSE_FLAG: str = "--no-recurse-submodules"
 #: ``GIT_ALLOW_PROTOCOL`` for the push exec: overrides every ``protocol.*.allow``, in
 #: every repository the push could touch, so no ``ext::``/``file``/``<helper>::``
 #: transport runs with the token in its environment.
-_PUSH_ALLOWED_PROTOCOLS = "https"
+_PUSH_ALLOWED_PROTOCOLS: str = "https"
 
 
 def _push_command(owner: str, repo: str, branch: str, tip: str, *, force: bool) -> str:
@@ -595,8 +595,8 @@ async def _push_base_sha(
 #: override), drop it from ``log --name-only`` (measured). The flag beats both; the
 #: ``-c`` pin is the second layer for the config route. A listed gitlink then fails a
 #: ``target_blobs`` check (its type is ``commit``, never ``blob``). Read at call time.
-_LOG_IGNORE_SUBMODULES_FLAG = "--ignore-submodules=none"
-_LOG_IGNORE_SUBMODULES_CONFIG = "diff.ignoreSubmodules=none"
+_LOG_IGNORE_SUBMODULES_FLAG: str = "--ignore-submodules=none"
+_LOG_IGNORE_SUBMODULES_CONFIG: str = "diff.ignoreSubmodules=none"
 
 
 def _log_submodule_args() -> str:
