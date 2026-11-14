@@ -162,7 +162,6 @@ class DockerAPIIntegration:
             return True
 
         try:
-            self.client = None
             self._try_docker_connections()
 
             if self.client:

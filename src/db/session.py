@@ -13,7 +13,7 @@ PgBouncer transaction-mode safety:
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 
 from psycopg import AsyncConnection
@@ -73,7 +73,7 @@ async def get_pool() -> AsyncConnectionPool:
 
 
 @asynccontextmanager
-async def get_connection() -> AsyncIterator[AsyncConnection]:
+async def get_connection() -> AsyncGenerator[AsyncConnection]:
     """Yield a pooled connection; the block is one transaction (commit on exit)."""
     pool = await get_pool()
     async with pool.connection() as conn:

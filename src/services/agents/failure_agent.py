@@ -16,6 +16,8 @@ import json
 import logging
 from typing import TYPE_CHECKING, Any, ClassVar
 
+from pydantic import BaseModel
+
 from coding_client.llm import (
     BaseLLMAgent,
     LLMSettings,
@@ -43,7 +45,7 @@ class FailureAnalysisAgent(BaseLLMAgent):
     """Inference-router-backed test-failure analysis agent."""
 
     schema_id: ClassVar[str] = "test_failure_analysis"
-    response_model: ClassVar[type[TestFailureAnalysisResponse]] = TestFailureAnalysisResponse
+    response_model: ClassVar[type[BaseModel] | None] = TestFailureAnalysisResponse
     system_prompt: ClassVar[str] = _SYSTEM_PROMPT
 
     def __init__(self, settings: LLMSettings | None = None) -> None:
