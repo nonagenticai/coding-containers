@@ -1,5 +1,10 @@
 version: 2
 
+# Re-validated 2026-11-15 on publication: the recorded update failure (2026-11-13T22:09Z)
+# predates the repository's public-standard pass. GitHub only recomputes a Dependabot update
+# job on a dependabot.yml change or its weekly schedule, so this touch is what puts a current
+# verdict on the record.
+
 # Dependabot replaces the org's private Renovate preset: a public repository cannot inherit a
 # preset hosted in a private one.
 updates:
