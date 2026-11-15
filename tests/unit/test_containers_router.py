@@ -2992,17 +2992,17 @@ class TestGitPush:
         assert manager.execute_command.await_count == 1
 
     @pytest.mark.parametrize(
-        "remote_url",
+        ("remote_url", "owner", "repo"),
         [
-            "https://github.com/acme-corp/repo",
-            "https://github.com/acme-corp/repo.git",
-            "https://GitHub.com/ACME-corp/Repo/",
-            "git@github.com:acme-corp/repo.git",
-            "ssh://git@github.com/acme-corp/repo.git",
+            ("https://github.com/acme-corp/repo", "acme-corp", "repo"),
+            ("https://github.com/acme-corp/repo.git", "acme-corp", "repo"),
+            ("https://GitHub.com/ACME-corp/Repo/", "ACME-corp", "Repo"),
+            ("git@github.com:acme-corp/repo.git", "acme-corp", "repo"),
+            ("ssh://git@github.com/acme-corp/repo.git", "acme-corp", "repo"),
         ],
     )
     async def test_origin_in_any_canonical_form_pushes_to_the_rebuilt_url(
-        self, app, client, remote_url
+        self, app, client, remote_url, owner, repo
     ):
         """Same repo as the origin → allowed, and git is handed the URL rebuilt
         from (owner, repo), never the raw string."""
@@ -3025,7 +3025,6 @@ class TestGitPush:
 
         app.dependency_overrides.clear()
         assert response.status_code == 200, response.text
-        owner, repo = ("ACME-corp", "Repo") if "GitHub.com" in remote_url else ("acme-corp", "repo")
         expected = f"https://github.com/{owner}/{repo}"
         remote_add = [
             c.args[1] for c in manager.execute_command.await_args_list if "remote add" in c.args[1]
