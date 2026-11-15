@@ -4,7 +4,9 @@ version = "1.2.0"
 license = { text = "Apache-2.0" }
 description = "Container Management Service - Docker lifecycle, code execution, agents, provisioning"
 authors = [{name = "Nonagentic", email = "dev@nonagentic.ai"}]
-requires-python = ">=3.14"
+# Bounded: unbounded, uv also resolves the `python_full_version >= '3.15'` split,
+# where the graph has no solution, and Dependabot records that as a job error.
+requires-python = ">=3.14,<3.15"
 dependencies = [
     "fastapi>=0.115.0",
     "uvicorn[standard]>=0.35.0",
@@ -34,7 +36,10 @@ dependencies = [
     "aiosqlite>=0.20.0",
     # Floor raised to 1.102.0 for GHSA-cg7w-rg45-pc59 (SSRF via IPv6 transition forms; fixed 1.102.0).
     # Keep the <2.0.0 ceiling — unconstrained the resolver jumps to 2.0.0.
-    "pydantic-ai>=1.107.7,<2.0.0",
+    # slim, not the umbrella: only the OpenAI provider is used, and the umbrella's bedrock
+# extra pulls boto3>=1.42.63, which the resolver cannot reconcile with this project
+# — the whole update job fails on packages that have nothing to do with it.
+    "pydantic-ai-slim[openai]>=1.107.7,<2.0.0",
     # requests removed — replaced by httpx (CVE-2026-25645)
     "aiofiles>=24.1.0",
     "pyyaml>=6.0",
