@@ -301,4 +301,4 @@ enforcement point). Neither is required to run this code.
 
 ## License
 
-Apache-2.0 — see [`LICENSE`](LICENSE).
+Apache-2.0 — see [`LICENSE`](LICENSE) and [`NOTICE`](NOTICE).
