@@ -1,5 +1,10 @@
 version: 2
 
+# Re-validated 2026-11-15 (third pass, after #21): the pinned coding-client rev still declared
+# the umbrella pydantic-ai, whose google/bedrock extras brought google-genai and
+# boto3>=1.44 — the unresolvable pair. The rev now points at coding-client's slim-provider
+# release and this service is on pydantic-ai 2.68. This touch makes GitHub recompute the job.
+
 # Re-validated 2026-11-15 (second pass, after #19): the umbrella pydantic-ai pulled the
 # bedrock extra's boto3 floor and requires-python was unbounded, both fixed. GitHub only
 # recomputes a Dependabot update job on a dependabot.yml change or its weekly schedule, so
