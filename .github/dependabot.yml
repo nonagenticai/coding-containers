@@ -1,9 +1,9 @@
 version: 2
 
-# Re-validated 2026-11-15 on publication: the recorded update failure (2026-11-13T22:09Z)
-# predates the repository's public-standard pass. GitHub only recomputes a Dependabot update
-# job on a dependabot.yml change or its weekly schedule, so this touch is what puts a current
-# verdict on the record.
+# Re-validated 2026-11-15 (second pass, after #19): the umbrella pydantic-ai pulled the
+# bedrock extra's boto3 floor and requires-python was unbounded, both fixed. GitHub only
+# recomputes a Dependabot update job on a dependabot.yml change or its weekly schedule, so
+# this touch is what puts a current verdict on the record.
 
 # Dependabot replaces the org's private Renovate preset: a public repository cannot inherit a
 # preset hosted in a private one.
