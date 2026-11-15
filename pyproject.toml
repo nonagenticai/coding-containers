@@ -39,7 +39,7 @@ dependencies = [
     # slim, not the umbrella: only the OpenAI provider is used, and the umbrella's bedrock
 # extra pulls boto3>=1.42.63, which the resolver cannot reconcile with this project
 # — the whole update job fails on packages that have nothing to do with it.
-    "pydantic-ai-slim[openai]>=1.107.7,<2.0.0",
+    "pydantic-ai-slim[openai]>=2.68.0,<3.0.0",
     # requests removed — replaced by httpx (CVE-2026-25645)
     "aiofiles>=24.1.0",
     "pyyaml>=6.0",
@@ -114,7 +114,7 @@ constraint-dependencies = [
 ]
 
 [tool.uv.sources]
-coding-client = { git = "https://github.com/nonagenticai/coding-client", rev = "f7f25b4e81fe4390586108a7a731608dacf462fd" }
+coding-client = { git = "https://github.com/nonagenticai/coding-client", rev = "ac8f3aa9957402e5f54053e45d6da7075a88d23a" }
 
 [tool.ruff]
 line-length = 100
